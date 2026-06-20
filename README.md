@@ -106,70 +106,6 @@ Benefits:
 
 ---
 
-## 📁 Project Structure
-
-```
-c:\Itay\Aicy\code\
-├── config/
-│   ├── __init__.py
-│   └── config.py                    # Configuration constants
-│
-├── data/
-│   ├── customers.json               # Mock customer database
-│   ├── orders.json                  # Mock order database
-│   └── sample_requests.json         # Test cases
-│
-├── src/
-│   ├── __init__.py
-│   ├── app.py                       # Streamlit glass-box UI demo
-│   │
-│   ├── core/                        # Foundational modules
-│   │   ├── __init__.py
-│   │   ├── agent.py                 # Main orchestrator
-│   │   └── models.py                # Pydantic schemas (Action enum, Decision, RuleResult)
-│   │
-│   ├── database/
-│   │   ├── __init__.py
-│   │   ├── interface.py             # Abstract DatabaseInterface
-│   │   └── json_db.py               # JSON implementation
-│   │
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   └── client.py                # OpenAI + Mock LLM clients
-│   │
-│   ├── observability/               # Logging + Tracing
-│   │   ├── __init__.py
-│   │   ├── logger.py                # Structured logging to JSON
-│   │   └── tracing.py               # Langfuse observability (v4+ compatible)
-│   │
-│   ├── rules/
-│   │   ├── __init__.py
-│   │   ├── base.py                  # Abstract Rule class
-│   │   └── rules.py                 # 8 rule implementations
-│   │
-│   └── engine/
-│       ├── __init__.py
-│       └── decision_engine.py        # Evaluate-all decision orchestrator (replaces RuleEngine)
-│
-├── tests/
-│   ├── __init__.py
-│   └── test_rules.py                # 30+ unit tests for rule engine
-│
-├── logs/                            # Generated log files (auto-created)
-│
-├── main.py                          # Entry point - process sample requests
-├── evaluate.py                      # Evaluation script - test accuracy
-├── requirements.txt                 # Python dependencies
-├── .env.example                     # Environment variables template
-├── .gitignore
-├── Dockerfile                       # Python 3.10-slim containerization
-├── docker-compose.yml               # Agent + Streamlit UI orchestration
-├── COMMAND.txt                      # Exact deployment commands with env vars
-└── .gitattributes                   # LF line endings for Docker compatibility
-```
-
----
-
 ## 🎯 Business Rules
 
 **8 rules evaluated for every request**. Precedence wins: **REJECT (3) > ESCALATE (2) > APPROVE (1)**.
@@ -187,19 +123,19 @@ Short-circuits on REJECT only. Safe to reorder—rule order affects which reason
 - **Reasoning**: "Ambiguous request: no order ID, customer ID, or email provided" / "Incomplete request: refund amount not specified"
 - **Precedence**: Medium (ESCALATE)
 
-### Rule 3: OrderStatusRule ⭐ NEW
+### Rule 3: OrderStatusRule
 - **Condition**: Order has non-refundable status: `refunded`, `cancelled`, or `not_shipped`
 - **Decision**: **REJECT**
 - **Reasoning**: "Order ORD-XX has already been refunded" / "Order ORD-XX was cancelled" / "Order ORD-XX was never shipped"
 - **Precedence**: Highest (REJECT)
 
-### Rule 4: RefundAmountVsOrderRule ⭐ NEW
+### Rule 4: RefundAmountVsOrderRule
 - **Condition**: Refund amount exceeds order total OR is negative
 - **Decision**: **ESCALATE**
 - **Reasoning**: "Refund amount ($XX) exceeds order total ($YY)" / "Invalid refund amount: $-50 is negative"
 - **Precedence**: Medium (ESCALATE)
 
-### Rule 5: CustomerStatusRule ⭐ NEW
+### Rule 5: CustomerStatusRule
 - **Condition**: Customer status is `banned` or `inactive`
 - **Decision**: **ESCALATE**
 - **Reasoning**: "Customer C1001 has status 'banned' - requires human review"
@@ -228,9 +164,9 @@ Short-circuits on REJECT only. Safe to reorder—rule order affects which reason
 ```
 Step 1: MissingDataRule              → REJECT if identifier provided but not found
 Step 2: IncompleteRequestRule        → ESCALATE if no identifier or missing amount
-Step 3: OrderStatusRule ⭐ NEW        → REJECT if order status is non-refundable
-Step 4: RefundAmountVsOrderRule ⭐ NEW → ESCALATE if refund > order or negative
-Step 5: CustomerStatusRule ⭐ NEW     → ESCALATE if customer banned/inactive
+Step 3: OrderStatusRule              → REJECT if order status is non-refundable
+Step 4: RefundAmountVsOrderRule      → ESCALATE if refund > order or negative
+Step 5: CustomerStatusRule           → ESCALATE if customer banned/inactive
 Step 6: HighValueOrOldOrderRule      → ESCALATE if refund ≥ $500 or age > 90 days
 Step 7: StandardRefundRule           → APPROVE if refund < $50 AND age ≤ 30 days
 Step 8: DefaultEscalationRule        → ESCALATE (catch-all)
@@ -654,19 +590,19 @@ pytest --cov=src/rules
   - Order found but amount missing → ESCALATE
   - $0 amount is specified (not missing) → No match
 
-- **TestOrderStatusRule** ⭐ NEW (5 tests)
+- **TestOrderStatusRule** (5 tests)
   - Order status "refunded" → REJECT
   - Order status "cancelled" → REJECT
   - Order status "not_shipped" → REJECT
   - Order status "delivered" → No match
   - Case-insensitive status check
 
-- **TestRefundAmountVsOrderRule** ⭐ NEW (4 tests)
+- **TestRefundAmountVsOrderRule** (4 tests)
   - Refund amount exceeds order total → ESCALATE
   - Refund equals order total → No match
   - Negative refund amount → ESCALATE
 
-- **TestCustomerStatusRule** ⭐ NEW (4 tests)
+- **TestCustomerStatusRule** (4 tests)
   - Customer status "banned" → ESCALATE
   - Customer status "inactive" → ESCALATE
   - Customer status "active" → No match
@@ -917,14 +853,6 @@ This MVP demonstrates the **architecture and security-first approach** needed fo
 | **6. Automated Customer Communication** | Reduces manual support team workload by 30%+; personalizes responses based on customer context and decision reasoning; improves customer satisfaction scores | Secondary LLM call that drafts email from `reasoning_trace`; template system for tone/compliance (legal-reviewed); attachments for refund confirmations; integrates with email service (SendGrid/AWS SES) |
 | **7. Active Learning Feedback Loop** | Identifies blind spots in rules by tracking human overrides; automatically flags edge cases for data team review; continuously improves accuracy over time | Track which ESCALATE cases humans overrode and why; ML pipeline flags patterns (e.g., "all $75 refunds with missing order IDs should REJECT, not ESCALATE"); suggest rule updates to analysts; measure accuracy drift |
 
-### Implementation Roadmap
-
-**Phase 1 (Weeks 1-2)**: Confidence scoring on LLM extraction  
-**Phase 2 (Weeks 3-4)**: FastAPI wrapper + PostgreSQL integration  
-**Phase 3 (Weeks 5-6)**: JWT/API Key auth + rate limiting middleware  
-**Phase 4 (Weeks 7-8)**: Admin dashboard MVP (view logs, override decisions)  
-**Phase 5 (Weeks 9-10)**: Dynamic rule engine backend + No-code rule builder UI  
-**Phase 6 (Weeks 11-12)**: Email drafting + active learning feedback loop  
 
 ### Why This Matters
 
