@@ -18,6 +18,7 @@ from src.database.json_db import JsonLocalDatabase
 from src.llm.client import MockLLMClient, OpenAILLMClient
 from src.core.agent import CustomerRequestAgent
 from src.observability.logger import log_agent_decision
+from src.observability.tracing import get_tracer
 from src.rules.rules import (
     DefaultEscalationRule,
     HighValueOrOldOrderRule,
@@ -143,6 +144,8 @@ if "request_text" not in st.session_state:
     st.session_state.request_text = ""
 if "batch_results" not in st.session_state:
     st.session_state.batch_results = None
+if "test_results" not in st.session_state:
+    st.session_state.test_results = None
 
 
 def load_example(text: str) -> None:
@@ -194,6 +197,29 @@ with st.sidebar:
 """
     )
     st.caption(f"Token gate: {MAX_TOKEN_COUNT} tokens  |  Eval date: {EVALUATION_DATE.date()}")
+
+    st.divider()
+    st.markdown("**Integration Tests**")
+
+    # OpenAI status
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_api_key:
+        st.success(f"✓ OpenAI API key configured")
+        st.caption(f"Using: {OPENAI_MODEL}")
+    else:
+        st.warning("⚠ OpenAI API key not set (using Mock LLM)")
+
+    # Langfuse status
+    langfuse_secret = os.getenv("LANGFUSE_SECRET_KEY")
+    langfuse_public = os.getenv("LANGFUSE_PUBLIC_KEY")
+    if langfuse_secret and langfuse_public:
+        tracer = get_tracer()
+        if tracer.enabled:
+            st.success(f"✓ Langfuse tracing enabled")
+        else:
+            st.warning("⚠ Langfuse configured but initialization failed")
+    else:
+        st.warning("⚠ Langfuse not configured")
 
 # -----------------------------------------------------------------------
 # Main page
@@ -462,3 +488,198 @@ if st.session_state.batch_results:
                     st.warning(f"**{action}**")
                 st.caption(f'"{preview}"')
                 st.markdown(f"_{reasoning}_")
+
+
+# -----------------------------------------------------------------------
+# Integration Tests Section
+# -----------------------------------------------------------------------
+st.divider()
+st.subheader("Integration Tests")
+st.markdown("Run tests to verify OpenAI and Langfuse integrations")
+
+test_col1, test_col2 = st.columns(2)
+
+with test_col1:
+    if st.button("Test OpenAI Integration", use_container_width=True):
+        st.session_state.test_results = None
+        with st.status("Testing OpenAI...", expanded=True) as test_status:
+            results = {}
+
+            # Test 1: Check if OpenAI client can be instantiated
+            st.markdown("### Test 1: OpenAI Client Initialization")
+            try:
+                if os.getenv("OPENAI_API_KEY"):
+                    test_llm = OpenAILLMClient()
+                    st.success("✓ OpenAI client initialized successfully")
+                    results["init"] = "PASS"
+                else:
+                    st.warning("⚠ Skipping test - OPENAI_API_KEY not set")
+                    results["init"] = "SKIP"
+            except Exception as e:
+                st.error(f"✗ Failed to initialize OpenAI client: {e}")
+                results["init"] = "FAIL"
+
+            # Test 2: Mock LLM extraction
+            st.markdown("### Test 2: LLM Info Extraction (Mock)")
+            try:
+                mock_llm = MockLLMClient()
+                test_text = "I want a refund for order ORD-55 for $30.00, my email is test@example.com"
+                extracted = mock_llm.extract_info(test_text)
+                if extracted.order_id == "ORD-55" and extracted.amount == 30.00:
+                    st.success(
+                        f"✓ Extraction works correctly\n\n"
+                        f"  - Order ID: {extracted.order_id}\n"
+                        f"  - Amount: ${extracted.amount:.2f}\n"
+                        f"  - Email: {extracted.customer_email}\n"
+                        f"  - Request Type: {extracted.request_type}"
+                    )
+                    results["extraction"] = "PASS"
+                else:
+                    st.error(f"✗ Extraction failed - got {extracted}")
+                    results["extraction"] = "FAIL"
+            except Exception as e:
+                st.error(f"✗ Extraction test failed: {e}")
+                results["extraction"] = "FAIL"
+
+            # Test 3: Try OpenAI extraction if available
+            if os.getenv("OPENAI_API_KEY"):
+                st.markdown("### Test 3: OpenAI Info Extraction (Real API)")
+                try:
+                    openai_llm = OpenAILLMClient()
+                    test_text = "I want a refund for order ORD-55 for $30.00"
+                    with st.spinner("Calling OpenAI API..."):
+                        extracted = openai_llm.extract_info(test_text)
+                    if extracted.order_id and extracted.amount:
+                        st.success(
+                            f"✓ OpenAI extraction successful\n\n"
+                            f"  - Order ID: {extracted.order_id}\n"
+                            f"  - Amount: {extracted.amount}\n"
+                            f"  - Request Type: {extracted.request_type}"
+                        )
+                        results["openai_extraction"] = "PASS"
+                    else:
+                        st.warning("⚠ OpenAI returned incomplete data")
+                        results["openai_extraction"] = "PARTIAL"
+                except Exception as e:
+                    st.error(f"✗ OpenAI extraction failed: {e}")
+                    results["openai_extraction"] = "FAIL"
+            else:
+                results["openai_extraction"] = "SKIP"
+
+            # Summary
+            st.markdown("### Summary")
+            passed = sum(1 for v in results.values() if v == "PASS")
+            failed = sum(1 for v in results.values() if v == "FAIL")
+            skipped = sum(1 for v in results.values() if v == "SKIP")
+
+            summary_cols = st.columns(3)
+            with summary_cols[0]:
+                st.metric("Passed", passed)
+            with summary_cols[1]:
+                st.metric("Failed", failed)
+            with summary_cols[2]:
+                st.metric("Skipped", skipped)
+
+            if failed == 0:
+                test_status.update(label="OpenAI Tests Complete ✓", state="complete")
+            else:
+                test_status.update(label="OpenAI Tests Failed ✗", state="error")
+
+            st.session_state.test_results = results
+
+with test_col2:
+    if st.button("Test Langfuse Integration", use_container_width=True):
+        st.session_state.test_results = None
+        with st.status("Testing Langfuse...", expanded=True) as test_status:
+            results = {}
+
+            # Test 1: Check environment
+            st.markdown("### Test 1: Environment Configuration")
+            langfuse_secret = os.getenv("LANGFUSE_SECRET_KEY")
+            langfuse_public = os.getenv("LANGFUSE_PUBLIC_KEY")
+
+            if langfuse_secret and langfuse_public:
+                st.success("✓ Langfuse credentials found in environment")
+                results["env"] = "PASS"
+            else:
+                st.warning("⚠ Langfuse credentials not configured")
+                results["env"] = "SKIP"
+
+            # Test 2: Check tracer initialization
+            st.markdown("### Test 2: Tracer Initialization")
+            try:
+                tracer = get_tracer()
+                if tracer.enabled:
+                    st.success("✓ Langfuse tracer initialized and enabled")
+                    results["init"] = "PASS"
+                else:
+                    st.warning("⚠ Tracer initialized but disabled (Langfuse library may not be installed)")
+                    results["init"] = "SKIP"
+            except Exception as e:
+                st.error(f"✗ Tracer initialization failed: {e}")
+                results["init"] = "FAIL"
+
+            # Test 3: Test trace context manager
+            st.markdown("### Test 3: Trace Context Manager")
+            try:
+                tracer = get_tracer()
+                with tracer.trace(
+                    "test_trace",
+                    input_data={"test": "data"},
+                    metadata={"test": "metadata"},
+                ) as span:
+                    pass
+                st.success("✓ Trace context manager works")
+                results["context"] = "PASS"
+            except Exception as e:
+                st.error(f"✗ Trace context manager failed: {e}")
+                results["context"] = "FAIL"
+
+            # Test 4: Test generation logging
+            st.markdown("### Test 4: Generation Logging")
+            try:
+                tracer = get_tracer()
+                tracer.log_generation(
+                    name="test_generation",
+                    input_text="test input",
+                    output_text="test output",
+                    model="test-model",
+                    metadata={"test": "metadata"},
+                )
+                st.success("✓ Generation logging works")
+                results["logging"] = "PASS"
+            except Exception as e:
+                st.error(f"✗ Generation logging failed: {e}")
+                results["logging"] = "FAIL"
+
+            # Test 5: Test flush
+            st.markdown("### Test 5: Flush Operation")
+            try:
+                tracer = get_tracer()
+                tracer.flush()
+                st.success("✓ Flush operation works")
+                results["flush"] = "PASS"
+            except Exception as e:
+                st.error(f"✗ Flush operation failed: {e}")
+                results["flush"] = "FAIL"
+
+            # Summary
+            st.markdown("### Summary")
+            passed = sum(1 for v in results.values() if v == "PASS")
+            failed = sum(1 for v in results.values() if v == "FAIL")
+            skipped = sum(1 for v in results.values() if v == "SKIP")
+
+            summary_cols = st.columns(3)
+            with summary_cols[0]:
+                st.metric("Passed", passed)
+            with summary_cols[1]:
+                st.metric("Failed", failed)
+            with summary_cols[2]:
+                st.metric("Skipped", skipped)
+
+            if failed == 0:
+                test_status.update(label="Langfuse Tests Complete ✓", state="complete")
+            else:
+                test_status.update(label="Langfuse Tests Failed ✗", state="error")
+
+            st.session_state.test_results = results
