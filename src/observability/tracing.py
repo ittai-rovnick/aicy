@@ -1,8 +1,7 @@
-"""Langfuse observability and tracing integration"""
+"""Langfuse observability and tracing integration — compatible with Langfuse SDK v4+"""
 import os
 from contextlib import contextmanager
 from typing import Optional, Any, Dict
-import uuid
 
 try:
     from langfuse import Langfuse
@@ -13,16 +12,13 @@ except ImportError:
 
 
 class LangfuseTracer:
-    """Langfuse tracing manager following best practices"""
 
     def __init__(self):
         self.client: Optional[Langfuse] = None
         self.enabled = False
-        self._current_trace_id: Optional[str] = None
         self._initialize()
 
     def _initialize(self):
-        """Initialize Langfuse if credentials are available"""
         if not LANGFUSE_AVAILABLE:
             return
 
@@ -49,20 +45,18 @@ class LangfuseTracer:
         input_data: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Context manager for tracing function execution
-
-        Usage:
-            with tracer.trace("extract_info", input_data={"text": raw_text}):
-                # code to trace
-        """
+        """Context manager that creates a Langfuse span wrapping the block."""
         if not self.enabled or not self.client:
             yield None
             return
 
-        trace_id = str(uuid.uuid4())
-        self._current_trace_id = trace_id
-        yield {"trace_id": trace_id, "name": name}
+        with self.client.start_as_current_observation(
+            name=name,
+            as_type="span",
+            input=input_data,
+            metadata=metadata,
+        ) as span:
+            yield span
 
     def log_generation(
         self,
@@ -73,24 +67,24 @@ class LangfuseTracer:
         metadata: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
     ):
-        """Log an LLM generation call to Langfuse"""
+        """Log an LLM generation as a child generation observation inside the current span."""
         if not self.enabled or not self.client:
             return
 
         try:
-            self.client.generation(
+            with self.client.start_as_current_observation(
                 name=name,
+                as_type="generation",
                 input=input_text,
                 output=output_text,
                 model=model,
                 metadata=metadata or {},
-                trace_id=trace_id or self._current_trace_id,
-            )
+            ):
+                pass
         except Exception as e:
             print(f"[WARN] Generation logging error: {e}")
 
     def flush(self):
-        """Flush any pending traces to Langfuse"""
         if self.enabled and self.client:
             try:
                 self.client.flush()
@@ -98,12 +92,10 @@ class LangfuseTracer:
                 print(f"[WARN] Flush error: {e}")
 
 
-# Global tracer instance
 _tracer = None
 
 
 def get_tracer() -> LangfuseTracer:
-    """Get the global tracer instance (singleton pattern)"""
     global _tracer
     if _tracer is None:
         _tracer = LangfuseTracer()
