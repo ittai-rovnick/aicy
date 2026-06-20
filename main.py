@@ -46,13 +46,14 @@ def main():
         print(f"Expected: {expected}")
         print(f"Decision: {decision.action}")
         print(f"Reasoning: {decision.reasoning_trace}")
-        print(f"Match: {'✅' if decision.action == expected else '❌'}")
+        match_status = "PASS" if decision.action == expected else "FAIL"
+        print(f"Match: {match_status}")
         print("-" * 80)
 
     # Flush any pending traces to Langfuse
     tracer = get_tracer()
     if tracer.enabled:
-        print("\n✅ Flushing traces to Langfuse...")
+        print("\n[OK] Flushing traces to Langfuse...")
         tracer.flush()
 
 
