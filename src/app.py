@@ -7,8 +7,10 @@ from pathlib import Path
 
 import streamlit as st
 import tiktoken
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+load_dotenv()
 
 from config.config import CUSTOMER_LOOKUP_ORDER, EVALUATION_DATE, MAX_TOKEN_COUNT, OPENAI_MODEL
 from src.core.models import AgentDecision, ExtractedRequestInfo
