@@ -37,7 +37,8 @@ Reasoning: "Standard refund conditions met. Amount: $45 (<$50) and age: 15 days 
 
 2. **Strategy Pattern (LLM Client)**
    - Abstract interface lets us swap LLM providers without rewriting code
-   - Currently: OpenAI API (gpt-4o-mini)
+   - Currently: OpenAI API (gpt-4o-mini) or MockLLMClient (regex-based, no API key)
+   - MockLLMClient used automatically if `OPENAI_API_KEY` not set or Streamlit testing
    - Future: Easy to add other providers (Claude, Anthropic, etc.)
 
 3. **Rule Engine (Business Logic)**
@@ -55,7 +56,7 @@ Reasoning: "Standard refund conditions met. Amount: $45 (<$50) and age: 15 days 
 ```
 raw_text input
     ↓
-[Word Count Check] ← Security Gate #1 (prevents token flooding)
+[Token Count Check] ← Security Gate (75 tokens max, prevents injection attacks)
     ↓
 [LLM Extraction] → ExtractedRequestInfo (Pydantic validated)
     ↓
@@ -64,6 +65,8 @@ raw_text input
 [Rule Engine] → First matching rule returns (action, reasoning)
     ↓
 [Structured Logging] → JSON log with request_id, action, reasoning
+    ↓
+[Langfuse Tracing] → Spans and generations sent to dashboard
     ↓
 AgentDecision JSON (APPROVE/REJECT/ESCALATE + reasoning)
 ```
@@ -85,6 +88,7 @@ c:\Itay\Aicy\code\
 │
 ├── src/
 │   ├── __init__.py
+│   ├── app.py                       # Streamlit glass-box UI demo
 │   │
 │   ├── core/                        # Foundational modules
 │   │   ├── __init__.py
@@ -98,12 +102,12 @@ c:\Itay\Aicy\code\
 │   │
 │   ├── llm/
 │   │   ├── __init__.py
-│   │   └── client.py                # OpenAI client + Langfuse integration
+│   │   └── client.py                # OpenAI + Mock LLM clients
 │   │
-│   ├── observability/               # Logging + Tracing (renamed from logging/)
+│   ├── observability/               # Logging + Tracing
 │   │   ├── __init__.py
-│   │   ├── logger.py                # Structured logging
-│   │   └── tracing.py               # Langfuse observability integration
+│   │   ├── logger.py                # Structured logging to JSON
+│   │   └── tracing.py               # Langfuse observability (v4+ compatible)
 │   │
 │   └── rules/
 │       ├── __init__.py
@@ -127,9 +131,10 @@ c:\Itay\Aicy\code\
 All rules are evaluated in order. **First match wins**.
 
 ### Rule 1: MissingDataRule
-- **Condition**: No matching customer found OR order not found
+- **Condition**: An explicit identifier (order ID, customer ID, or email) was provided but not found in the database
 - **Decision**: **REJECT**
-- **Reasoning**: "No matching customer found in system" OR "No matching order found for order ID: ORD-XX"
+- **Reasoning**: "No matching customer or order found in system" OR "No matching order found for order ID: ORD-XX"
+- **Note**: Anonymous requests (no identifier at all) skip this rule and fall through to DefaultEscalationRule
 
 ### Rule 2: HighValueOrOldOrderRule
 - **Condition**: Amount > $500 OR order age > 90 days
@@ -159,10 +164,10 @@ Customer/Order missing? → REJECT
 
 ## 🔒 Security Mechanisms
 
-### Layer 1: Word Count Limit
-- **What**: Maximum 50 words per request
+### Layer 1: Token Count Limit
+- **What**: Maximum 75 tokens per request (gpt-4o-mini encoding)
 - **Why**: Prevents token flooding and complex prompt injection payloads
-- **Effect**: ESCALATE immediately if exceeded (zero LLM cost)
+- **Effect**: ESCALATE immediately if exceeded (zero LLM cost, request never reaches LLM)
 
 ### Layer 2: Pydantic Validation
 - **What**: LLM output must match `ExtractedRequestInfo` schema
@@ -197,7 +202,7 @@ OPENAI_MODEL = "gpt-4o-mini"
 LLM_TEMPERATURE = 0.0  # Deterministic (not creative)
 
 # Safety limits
-MAX_WORD_COUNT = 50  # Prevents token flooding attacks
+MAX_TOKEN_COUNT = 75  # Prevents token flooding attacks (gpt-4o-mini encoding)
 ```
 
 ### Environment Variables (`.env`)
@@ -234,27 +239,79 @@ copy .env.example .env
 OPENAI_API_KEY=sk-...
 ```
 
-### 3. Run the Agent
+### 3. Run Streamlit Demo (Recommended for Testing)
+```bash
+streamlit run src/app.py
+```
+
+**Features**:
+- **Glass-box UI** — watch the entire pipeline execute step-by-step
+- **4 Main Test Cases** — pre-loaded buttons for standard scenarios
+- **Run All 4 Tests** — batch execution with summary cards showing results
+- **More Options expander** — additional test cases and prompt injection examples
+- Shows real LLM output (gpt-4o-mini) with extracted fields as JSON
+- Visual security gate: token counter (limit: 75 tokens)
+- Rule engine visualization: see which rule triggered and why
+- Color-coded decisions: green (APPROVE), red (REJECT), yellow (ESCALATE)
+
+### 4. Run the Agent (Batch Processing)
 ```bash
 python main.py
 ```
 
 **Output**:
-- Processes all 5 sample requests
+- Processes all sample requests from `data/sample_requests.json`
 - Prints each request with expected vs actual decision
 - Shows reasoning trace
 - Marks as ✅ or ❌
 
-### 4. Run Evaluation Script
+### 5. Run Evaluation Script
 ```bash
 python evaluate.py
 ```
 
 **Output**:
-- Tests all 5 sample requests
+- Tests all sample requests
 - Compares against expected_action
 - Shows accuracy percentage
 - Returns exit code 0 (all pass) or 1 (failures)
+
+---
+
+## 🎨 Streamlit Glass-Box UI
+
+The interactive UI in `src/app.py` demonstrates the system to technical interviewers by showing every layer of the pipeline in real time.
+
+### Features
+
+**4 Main Test Cases** (pre-loaded buttons):
+1. Test 1 - Standard Refund → APPROVE
+2. Test 2 - Policy Gray Area → ESCALATE
+3. Test 3 - Unrecognized Customer → REJECT
+4. Test 4 - Ambiguous Request → ESCALATE
+
+**Run All 4 Tests** (batch mode):
+- Executes all tests silently (no pipeline visualization)
+- Shows live progress bar
+- Renders a 4-column summary card grid with each test's action and reasoning
+
+**More Options Expander**:
+- High Value / Old Order test
+- Prompt Injection variants (5x and Long)
+- Keep the main grid clean while providing edge cases
+
+**Visual Pipeline**:
+1. **Security Gate** — real-time token count with progress bar, blocks if > 75 tokens
+2. **LLM Extraction** — shows extracted JSON (customer_id, order_id, amount, request_type)
+3. **Database Lookup** — displays customer and order details if found
+4. **Rule Engine** — visualizes rule evaluation, shows which rule triggered
+5. **Final Decision** — color-coded banner (green=APPROVE, red=REJECT, yellow=ESCALATE)
+
+**Smart Session State**:
+- Buttons update the text area dynamically
+- "Process Single Request" shows full pipeline
+- "Run All" saves results to session and displays summary
+- Clearing batch results when running single tests prevents view overlap
 
 ---
 
@@ -271,18 +328,28 @@ python evaluate.py
 - **ORD-99**: $600, placed 2025-12-01 (198 days old) → Candidate for ESCALATE (high value + old)
 - **ORD-100**: $250, placed 2026-02-15 (121 days old) → Candidate for ESCALATE (too old)
 
-### Test Cases (5 requests)
-- **REQ-01**: "refund for ORD-55" → Expected: APPROVE
-- **REQ-02**: "refund for ORD-75" → Expected: ESCALATE
-- **REQ-03**: "refund for $600 ORD-99 months ago" → Expected: ESCALATE
-- **REQ-04**: "refund, no order info, wrong email" → Expected: REJECT
-- **REQ-05**: "C1003, ORD-100 for $250" → Expected: ESCALATE
+### 4 Main Test Cases (Built into Streamlit UI)
+- **Test 1 - Standard Refund** 
+  - Text: "Hi, I bought a shirt for $30 last week (Order ORD-55) and I would like a refund please."
+  - Expected: **APPROVE** (StandardRefundRule: $30 < $50, 15 days ≤ 30)
+
+- **Test 2 - Policy Gray Area**
+  - Text: "I want a refund for the $200 headphones I bought 45 days ago."
+  - Expected: **ESCALATE** (DefaultEscalationRule: gray area, missing order ID)
+
+- **Test 3 - Unrecognized Customer**
+  - Text: "I need a refund for order 999999. My email is unknown@email.com."
+  - Expected: **REJECT** (MissingDataRule: email provided but not in DB)
+
+- **Test 4 - Ambiguous Request**
+  - Text: "I ordered a laptop last week but haven't received it yet."
+  - Expected: **ESCALATE** (DefaultEscalationRule: no identifiers, inquiry not refund)
 
 ---
 
 ## 🔌 Observability with Langfuse
 
-Complete observability integration with Langfuse for cost tracking, latency monitoring, and LLM request tracing.
+Complete observability integration with Langfuse v4+ for cost tracking, latency monitoring, and LLM request tracing.
 
 ### Why Langfuse?
 - ✅ Open-source (can self-host)
@@ -290,6 +357,7 @@ Complete observability integration with Langfuse for cost tracking, latency moni
 - ✅ Automatic token counting and cost calculation
 - ✅ Interactive dashboard for traces and metrics
 - ✅ Production-grade observability
+- ✅ Modern SDK (v4.9+) with span-based tracing
 
 ### Setup (Optional but Recommended)
 
@@ -318,11 +386,13 @@ Complete observability integration with Langfuse for cost tracking, latency moni
 
 ### Architecture
 
-**Tracing System** (`src/tracing.py`):
-- Singleton `LangfuseTracer` manages connection to Langfuse
+**Tracing System** (`src/observability/tracing.py`):
+- Singleton `LangfuseTracer` manages connection to Langfuse v4+
+- Uses `start_as_current_observation()` for span-based tracing (v4 API)
+- Nested spans: request spans contain generation spans for LLM calls
 - Gracefully initializes with credentials from environment
 - Falls back to no-op if credentials missing or connection fails
-- Provides context managers for tracing spans
+- Provides context managers for clean lifecycle management
 
 **Integration Points**:
 
