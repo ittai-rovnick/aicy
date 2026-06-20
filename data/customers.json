@@ -1,0 +1,23 @@
+[
+  {
+    "id": "C1001",
+    "name": "Dani Cohen",
+    "email": "dani@example.com",
+    "tier": "gold",
+    "status": "active"
+  },
+  {
+    "id": "C1002",
+    "name": "Maya Levi",
+    "email": "maya@example.com",
+    "tier": "standard",
+    "status": "active"
+  },
+  {
+    "id": "C1003",
+    "name": "Yosi Meir",
+    "email": "yosi@example.com",
+    "tier": "bronze",
+    "status": "active"
+  }
+]

@@ -1,0 +1,30 @@
+[
+  {
+    "order_id": "ORD-55",
+    "customer_id": "C1001",
+    "amount": 45.00,
+    "date": "2026-06-01",
+    "status": "delivered"
+  },
+  {
+    "order_id": "ORD-75",
+    "customer_id": "C1002",
+    "amount": 75.00,
+    "date": "2026-06-10",
+    "status": "delivered"
+  },
+  {
+    "order_id": "ORD-99",
+    "customer_id": "C1001",
+    "amount": 600.00,
+    "date": "2025-12-01",
+    "status": "delivered"
+  },
+  {
+    "order_id": "ORD-100",
+    "customer_id": "C1003",
+    "amount": 250.00,
+    "date": "2026-02-15",
+    "status": "delivered"
+  }
+]

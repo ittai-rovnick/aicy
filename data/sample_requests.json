@@ -1,0 +1,27 @@
+[
+  {
+    "request_id": "REQ-01",
+    "text": "Hi, I need a refund for my last order ORD-55. It arrived damaged.",
+    "expected_action": "APPROVE"
+  },
+  {
+    "request_id": "REQ-02",
+    "text": "Hello, please refund my order ORD-75, I didn't like the color.",
+    "expected_action": "ESCALATE"
+  },
+  {
+    "request_id": "REQ-03",
+    "text": "I want my money back! I bought a laptop for $600 (ORD-99) months ago and it stopped working.",
+    "expected_action": "ESCALATE"
+  },
+  {
+    "request_id": "REQ-04",
+    "text": "Can I get a refund? I don't remember my order but email is wrong@email.com",
+    "expected_action": "REJECT"
+  },
+  {
+    "request_id": "REQ-05",
+    "text": "Customer ID C1003, order ORD-100 for $250, placed on 2026-02-15. Want refund.",
+    "expected_action": "ESCALATE"
+  }
+]
