@@ -45,7 +45,7 @@ def main():
         print(f"Text: {text[:60]}..." if len(text) > 60 else f"Text: {text}")
         print(f"Expected: {expected}")
         print(f"Decision: {decision.action}")
-        print(f"Reasoning: {decision.reasoning_trace}")
+        print(f"Reasoning: {decision.primary_reason}")
         match_status = "PASS" if decision.action == expected else "FAIL"
         print(f"Match: {match_status}")
         print("-" * 80)

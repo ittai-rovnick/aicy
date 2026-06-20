@@ -27,6 +27,10 @@ Extract the following fields from customer messages:
 - customer_email: The customer's email address
 - order_id: The order ID (format: ORD-###)
 - request_type: One of: refund, account_inquiry, complaint, unknown
+  * refund: Message asks for refund, return, money back, or reimbursement
+  * account_inquiry: Message asks about account, login, password, balance, etc.
+  * complaint: Message complains about product, service, or experience (broken, damaged, etc.)
+  * unknown: None of the above
 - amount: The monetary amount mentioned (numeric value only)
 
 Be precise. Only extract information explicitly mentioned in the message."""
@@ -58,6 +62,13 @@ Be precise. Only extract information explicitly mentioned in the message."""
             )
 
             result = response.choices[0].message.parsed
+
+            # Fallback: if LLM returned "unknown" but text contains refund keywords,
+            # reclassify as refund (robustness against LLM unreliability)
+            if result.request_type == "unknown":
+                lower_text = raw_text.lower()
+                if any(kw in lower_text for kw in ('refund', 'return', 'money back', 'reimbursement')):
+                    result.request_type = "refund"
 
             # Log generation details
             self.tracer.log_generation(

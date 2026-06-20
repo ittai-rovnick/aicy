@@ -9,7 +9,7 @@
   {
     "order_id": "ORD-75",
     "customer_id": "C1002",
-    "amount": 75.00,
+    "amount": 600.00,
     "date": "2026-06-10",
     "status": "delivered"
   },
@@ -18,6 +18,13 @@
     "customer_id": "C1001",
     "amount": 600.00,
     "date": "2025-12-01",
+    "status": "delivered"
+  },
+  {
+    "order_id": "ORD-77",
+    "customer_id": "C1001",
+    "amount": 150.00,
+    "date": "2026-05-15",
     "status": "delivered"
   },
   {

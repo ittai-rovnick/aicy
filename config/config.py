@@ -15,6 +15,12 @@ LLM_TEMPERATURE = 0.0  # Deterministic extraction
 # Safety limits
 MAX_TOKEN_COUNT = 75
 
+# Refund decision thresholds - change these to adjust auto-approval rules
+APPROVE_MAX_AMOUNT = 50       # refund under $50 can auto-approve
+ESCALATE_MIN_AMOUNT = 500     # refund at or over $500 escalates
+APPROVE_MAX_AGE_DAYS = 30     # order 30 days old or newer can approve
+ESCALATE_MIN_AGE_DAYS = 90    # order older than this escalates
+
 # Langfuse Configuration
 LANGFUSE_PUBLIC_KEY = ""  # Set via environment variable
 LANGFUSE_SECRET_KEY = ""  # Set via environment variable

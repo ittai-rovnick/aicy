@@ -35,16 +35,16 @@ MAIN_TESTS = [
         "Hi, I bought a shirt for $30 last week (Order ORD-55) and I would like a refund please.",
     ),
     (
-        "Test 2 - Policy Gray Area",
-        "I want a refund for the $200 headphones I bought 45 days ago.",
+        "Test 2 - High Value Refund",
+        "I need a $550 refund for order ORD-75, it stopped working after two weeks.",
     ),
     (
         "Test 3 - Unrecognized Customer",
         "I need a refund for order 999999. My email is unknown@email.com.",
     ),
     (
-        "Test 4 - Ambiguous Request",
-        "I ordered a laptop last week but haven't received it yet.",
+        "Test 4 - Gray Area",
+        "Hi, I'm customer C1001 and I want my money back for order ORD-77.",
     ),
 ]
 
@@ -99,12 +99,13 @@ def _run_pipeline(text: str) -> AgentDecision:
     if token_count > MAX_TOKEN_COUNT:
         return AgentDecision(
             action="ESCALATE",
-            reasoning_trace=f"Safety violation: {token_count} tokens exceeds {MAX_TOKEN_COUNT} token limit",
+            primary_reason=f"Safety violation: {token_count} tokens exceeds {MAX_TOKEN_COUNT} token limit",
+            trace=[]
         )
     try:
         extracted: ExtractedRequestInfo = llm.extract_info(text)
     except Exception as exc:
-        return AgentDecision(action="ESCALATE", reasoning_trace=f"LLM extraction failed: {exc}")
+        return AgentDecision(action="ESCALATE", primary_reason=f"LLM extraction failed: {exc}", trace=[])
 
     customer = None
     for param in CUSTOMER_LOOKUP_ORDER:
@@ -129,13 +130,18 @@ def _run_pipeline(text: str) -> AgentDecision:
         "extracted_order_id": extracted.order_id,
         "extracted_customer_id": extracted.customer_id,
         "extracted_email": extracted.customer_email,
+        "request_type": extracted.request_type,
     }
     for _, rule in _RULE_INSTANCES:
-        action, reasoning = rule.evaluate(context)
-        if action is not None:
-            return AgentDecision(action=action, reasoning_trace=reasoning)
+        result = rule.evaluate(context)
+        if result is not None:
+            return AgentDecision(
+                action=str(result.action.name),
+                primary_reason=result.reason,
+                trace=[result.model_dump()]
+            )
 
-    return AgentDecision(action="ESCALATE", reasoning_trace="No rule matched")
+    return AgentDecision(action="ESCALATE", primary_reason="No rule matched", trace=[])
 
 # -----------------------------------------------------------------------
 # Session state
@@ -337,7 +343,8 @@ if process_single:
             )
             decision = AgentDecision(
                 action="ESCALATE",
-                reasoning_trace=f"Safety violation: {token_count} tokens exceeds {MAX_TOKEN_COUNT} token limit",
+                primary_reason=f"Safety violation: {token_count} tokens exceeds {MAX_TOKEN_COUNT} token limit",
+                trace=[]
             )
             pipeline_status.update(label="Blocked at Security Gate", state="error")
 
@@ -357,7 +364,8 @@ if process_single:
                     st.error(f"LLM extraction failed: {exc}")
                     decision = AgentDecision(
                         action="ESCALATE",
-                        reasoning_trace=f"LLM extraction failed: {exc}",
+                        primary_reason=f"LLM extraction failed: {exc}",
+                        trace=[]
                     )
                     pipeline_status.update(label="LLM Error", state="error")
                     st.stop()
@@ -413,28 +421,30 @@ if process_single:
                 "extracted_order_id": extracted.order_id,
                 "extracted_customer_id": extracted.customer_id,
                 "extracted_email": extracted.customer_email,
+                "request_type": extracted.request_type,
             }
 
             final_action = final_reasoning = None
             for rule_name, rule in _RULE_INSTANCES:
-                action, reasoning = rule.evaluate(context)
-                if action is not None:
-                    st.markdown(f"**`{rule_name}`** => **`{action}`** (TRIGGERED)")
-                    st.caption(f"   -> {reasoning}")
-                    final_action, final_reasoning = action, reasoning
+                result = rule.evaluate(context)
+                if result is not None:
+                    action_name = result.action.name
+                    st.markdown(f"**`{rule_name}`** => **`{action_name}`** (TRIGGERED)")
+                    st.caption(f"   -> {result.reason}")
+                    final_action, final_reasoning = action_name, result.reason
                     break
                 else:
                     st.markdown(f"~~`{rule_name}`~~ -- no match, continuing...")
 
-            decision = AgentDecision(action=final_action, reasoning_trace=final_reasoning)
+            decision = AgentDecision(action=final_action, primary_reason=final_reasoning, trace=[])
             pipeline_status.update(label="Pipeline Complete", state="complete")
 
-    log_agent_decision("UI-REQ", decision.action, decision.reasoning_trace)
+    log_agent_decision("UI-REQ", decision.action, decision.primary_reason)
 
     # Final Decision Banner
     st.divider()
     st.subheader("3. Final Decision")
-    reasoning_md = f"**System Reasoning:** {decision.reasoning_trace}"
+    reasoning_md = f"**System Reasoning:** {decision.primary_reason}"
 
     if decision.action == "APPROVE":
         st.success(f"### APPROVED\n\n{reasoning_md}")
@@ -458,7 +468,7 @@ if run_all:
             text=f"Running {label} ({i + 1}/{len(MAIN_TESTS)})...",
         )
         decision = _run_pipeline(text)
-        log_agent_decision(f"UI-BATCH-{i + 1}", decision.action, decision.reasoning_trace)
+        log_agent_decision(f"UI-BATCH-{i + 1}", decision.action, decision.primary_reason)
         results.append({"label": label, "text": text, "decision": decision})
 
     prog_placeholder.progress(1.0, text="All 4 tests complete!")
@@ -474,7 +484,7 @@ if st.session_state.batch_results:
     r_cols = st.columns(4)
     for col, result in zip(r_cols, st.session_state.batch_results):
         action = result["decision"].action
-        reasoning = result["decision"].reasoning_trace
+        reasoning = result["decision"].primary_reason
         preview = result["text"][:90] + ("..." if len(result["text"]) > 90 else "")
 
         with col:

@@ -1,6 +1,29 @@
 """Pydantic models for data validation"""
+from enum import IntEnum
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
+
+
+class Action(IntEnum):
+    """Decision action precedence. Higher value = more decisive.
+    REJECT (3) > ESCALATE (2) > APPROVE (1). Use max() to pick the winner."""
+    APPROVE = 1
+    ESCALATE = 2
+    REJECT = 3
+
+
+class RuleResult(BaseModel):
+    """A single rule's evaluation result."""
+    rule: str           # Rule class name
+    action: Action      # APPROVE, ESCALATE, or REJECT
+    reason: str         # Why this rule fired
+
+
+class Decision(BaseModel):
+    """Final decision with full audit trace."""
+    action: Action
+    primary_reason: str
+    trace: list[RuleResult]
 
 
 class ExtractedRequestInfo(BaseModel):
@@ -33,6 +56,7 @@ class Order(BaseModel):
 
 
 class AgentDecision(BaseModel):
-    """Final decision output from agent"""
-    action: Literal["APPROVE", "REJECT", "ESCALATE"]
-    reasoning_trace: str
+    """Final decision output from agent (JSON-serializable version)"""
+    action: str          # "APPROVE", "REJECT", "ESCALATE"
+    primary_reason: str
+    trace: list[dict]    # [{rule, action, reason}, ...]

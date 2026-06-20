@@ -23,5 +23,10 @@
     "request_id": "REQ-05",
     "text": "Customer ID C1003, order ORD-100 for $250, placed on 2026-02-15. Want refund.",
     "expected_action": "ESCALATE"
+  },
+  {
+    "request_id": "REQ-06",
+    "text": "I bought a shirt for $60 last week and I would like a refund please.",
+    "expected_action": "REJECT"
   }
 ]

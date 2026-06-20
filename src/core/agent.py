@@ -5,7 +5,7 @@ import tiktoken
 
 from src.database.interface import DatabaseInterface
 from src.llm.client import LLMClientInterface
-from src.rules.engine import RuleEngine
+from src.engine.decision_engine import decide
 from src.observability.logger import log_agent_decision
 from src.core.models import AgentDecision, Customer, ExtractedRequestInfo, Order
 from config.config import MAX_TOKEN_COUNT, CUSTOMER_LOOKUP_ORDER, OPENAI_MODEL
@@ -20,7 +20,6 @@ class CustomerRequestAgent:
     def __init__(self, llm_client: LLMClientInterface, db: DatabaseInterface):
         self.llm = llm_client
         self.db = db
-        self.rule_engine = RuleEngine()
         self.tracer = get_tracer()
 
     def process_request(self, request_id: str, raw_text: str) -> AgentDecision:
@@ -38,9 +37,9 @@ class CustomerRequestAgent:
                 return self._escalate(request_id, f"LLM extraction failed: {e}")
 
             context = self._build_context(extracted)
-            action, reasoning = self.rule_engine.run(context)
-            log_agent_decision(request_id, action, reasoning)
-            return AgentDecision(action=action, reasoning_trace=reasoning)
+            decision_obj = decide(context)
+            log_agent_decision(request_id, decision_obj.action.name, decision_obj.primary_reason)
+            return self._format_decision(decision_obj)
 
     def _check_word_limit(self, request_id: str, raw_text: str) -> Optional[AgentDecision]:
         token_count = len(_tokenizer.encode(raw_text))
@@ -60,6 +59,7 @@ class CustomerRequestAgent:
             "extracted_order_id": extracted.order_id,
             "extracted_customer_id": extracted.customer_id,
             "extracted_email": extracted.customer_email,
+            "request_type": extracted.request_type,
         }
 
     def _lookup_customer(self, extracted: ExtractedRequestInfo) -> Optional[Customer]:
@@ -83,7 +83,33 @@ class CustomerRequestAgent:
                 return orders[-1]
         return None
 
+    def _format_decision(self, decision_obj) -> AgentDecision:
+        """Convert Decision object to JSON-serializable AgentDecision."""
+        return AgentDecision(
+            action=decision_obj.action.name,
+            primary_reason=decision_obj.primary_reason,
+            trace=[
+                {
+                    "rule": result.rule,
+                    "action": result.action.name,
+                    "reason": result.reason,
+                }
+                for result in decision_obj.trace
+            ],
+        )
+
     def _escalate(self, request_id: str, reason: str) -> AgentDecision:
-        decision = AgentDecision(action="ESCALATE", reasoning_trace=reason)
-        log_agent_decision(request_id, decision.action, decision.reasoning_trace)
+        """Helper to quickly escalate without running the full decision engine."""
+        decision = AgentDecision(
+            action="ESCALATE",
+            primary_reason=reason,
+            trace=[
+                {
+                    "rule": "agent",
+                    "action": "ESCALATE",
+                    "reason": reason,
+                }
+            ],
+        )
+        log_agent_decision(request_id, "ESCALATE", reason)
         return decision

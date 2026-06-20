@@ -76,15 +76,33 @@ AgentDecision JSON (APPROVE/REJECT/ESCALATE + reasoning)
 Every failure path converges on **ESCALATE**, never on an exception or crash:
 
 ```
-Token overflow     → ESCALATE
-LLM exception      → ESCALATE  (try/except wrapping all API calls)
-Bad LLM output     → ESCALATE  (Pydantic ValidationError → caught)
-Customer not found → REJECT    (MissingDataRule deterministic logic)
-Unknown/gray area  → ESCALATE  (DefaultEscalationRule fallback)
-Truly unhandled    → ESCALATE  (engine hardcoded fallback)
+Token overflow      → ESCALATE
+LLM exception       → ESCALATE  (try/except wrapping all API calls)
+Bad LLM output      → ESCALATE  (Pydantic ValidationError → caught)
+Customer/order not found → REJECT  (MissingDataRule deterministic logic)
+Ambiguous/missing data   → ESCALATE  (IncompleteRequestRule)
+Unknown/gray area   → ESCALATE  (DefaultEscalationRule fallback)
+Truly unhandled     → ESCALATE  (engine hardcoded fallback)
 ```
 
 **Key Insight**: ESCALATE acts as the system's universal "I'm not confident" answer—it degrades gracefully to human review instead of crashing or making a wrong automated decision. This design ensures **production reliability**: no unhandled exceptions reach the customer, no silent failures occur in the logs.
+
+### Rule Evaluation Architecture: Evaluate-All with Explicit Precedence
+
+**Design Philosophy**: Evaluate every rule and pick the winner by severity, rather than short-circuiting on first match.
+
+```
+All 8 rules evaluated → Precedence determines winner:
+                        REJECT (3) > ESCALATE (2) > APPROVE (1)
+
+Short-circuit on REJECT only (most decisive), otherwise pick highest severity.
+
+Benefits:
+✅ Safe rule reordering (order is conceptual, not load-bearing)
+✅ Full audit trace (all rules that ran are logged)
+✅ Explicit precedence (one number determines severity)
+✅ Config-driven thresholds ($50, $500, 30 days, 90 days in config.py)
+```
 
 ---
 
@@ -108,7 +126,7 @@ c:\Itay\Aicy\code\
 │   ├── core/                        # Foundational modules
 │   │   ├── __init__.py
 │   │   ├── agent.py                 # Main orchestrator
-│   │   └── models.py                # Pydantic schemas
+│   │   └── models.py                # Pydantic schemas (Action enum, Decision, RuleResult)
 │   │
 │   ├── database/
 │   │   ├── __init__.py
@@ -124,11 +142,14 @@ c:\Itay\Aicy\code\
 │   │   ├── logger.py                # Structured logging to JSON
 │   │   └── tracing.py               # Langfuse observability (v4+ compatible)
 │   │
-│   └── rules/
+│   ├── rules/
+│   │   ├── __init__.py
+│   │   ├── base.py                  # Abstract Rule class
+│   │   └── rules.py                 # 8 rule implementations
+│   │
+│   └── engine/
 │       ├── __init__.py
-│       ├── base.py                  # Abstract Rule class
-│       ├── rules.py                 # 4 rule implementations
-│       └── engine.py                # RuleEngine orchestrator
+│       └── decision_engine.py        # Evaluate-all decision orchestrator (replaces RuleEngine)
 │
 ├── tests/
 │   ├── __init__.py
@@ -151,36 +172,70 @@ c:\Itay\Aicy\code\
 
 ## 🎯 Business Rules
 
-All rules are evaluated in order. **First match wins**.
+**8 rules evaluated for every request**. Precedence wins: **REJECT (3) > ESCALATE (2) > APPROVE (1)**.
+Short-circuits on REJECT only. Safe to reorder—rule order affects which reason is reported, never the final decision.
 
 ### Rule 1: MissingDataRule
-- **Condition**: An explicit identifier (order ID, customer ID, or email) was provided but not found in the database
+- **Condition**: An explicit identifier (order ID, customer ID, or email) was provided but no matching customer/order exists
 - **Decision**: **REJECT**
-- **Reasoning**: "No matching customer or order found in system" OR "No matching order found for order ID: ORD-XX"
-- **Note**: Anonymous requests (no identifier at all) skip this rule and fall through to DefaultEscalationRule
+- **Reasoning**: "No matching customer or order found in system"
+- **Precedence**: Highest (REJECT)
 
-### Rule 2: HighValueOrOldOrderRule
-- **Condition**: Amount > $500 OR order age > 90 days
+### Rule 2: IncompleteRequestRule
+- **Condition**: No identifier at all (anonymous), or an order was found but no refund amount was specified
 - **Decision**: **ESCALATE**
-- **Reasoning**: "High value amount: $XXX | Order too old: YY days (> 90 days)"
-- **Note**: Evaluation date is fixed at 2026-06-16
+- **Reasoning**: "Ambiguous request: no order ID, customer ID, or email provided" / "Incomplete request: refund amount not specified"
+- **Precedence**: Medium (ESCALATE)
 
-### Rule 3: StandardRefundRule
-- **Condition**: Amount < $50 AND order age ≤ 30 days
+### Rule 3: OrderStatusRule ⭐ NEW
+- **Condition**: Order has non-refundable status: `refunded`, `cancelled`, or `not_shipped`
+- **Decision**: **REJECT**
+- **Reasoning**: "Order ORD-XX has already been refunded" / "Order ORD-XX was cancelled" / "Order ORD-XX was never shipped"
+- **Precedence**: Highest (REJECT)
+
+### Rule 4: RefundAmountVsOrderRule ⭐ NEW
+- **Condition**: Refund amount exceeds order total OR is negative
+- **Decision**: **ESCALATE**
+- **Reasoning**: "Refund amount ($XX) exceeds order total ($YY)" / "Invalid refund amount: $-50 is negative"
+- **Precedence**: Medium (ESCALATE)
+
+### Rule 5: CustomerStatusRule ⭐ NEW
+- **Condition**: Customer status is `banned` or `inactive`
+- **Decision**: **ESCALATE**
+- **Reasoning**: "Customer C1001 has status 'banned' - requires human review"
+- **Precedence**: Medium (ESCALATE)
+
+### Rule 6: HighValueOrOldOrderRule
+- **Condition**: Refund amount ≥ $500 (config: `ESCALATE_MIN_AMOUNT`) OR order age > 90 days (config: `ESCALATE_MIN_AGE_DAYS`)
+- **Decision**: **ESCALATE**
+- **Reasoning**: "Refund $500 exceeds threshold $500 | Order 91 days old (> 90)"
+- **Precedence**: Medium (ESCALATE)
+- **Note**: Thresholds are configurable constants, not hardcoded
+
+### Rule 7: StandardRefundRule
+- **Condition**: Refund amount < $50 (config: `APPROVE_MAX_AMOUNT`) AND order age ≤ 30 days (config: `APPROVE_MAX_AGE_DAYS`)
 - **Decision**: **APPROVE**
-- **Reasoning**: "Standard refund conditions met. Amount: $XX (<$50) and age: YY days (<=30 days)."
+- **Reasoning**: "Standard refund approved. Amount: $30 (< $50) and age: 15 days (<= 30)."
+- **Precedence**: Lowest (APPROVE)
 
-### Rule 4: DefaultEscalationRule
-- **Condition**: Everything else (gray areas)
+### Rule 8: DefaultEscalationRule
+- **Condition**: Everything else (gray areas not matched by other rules)
 - **Decision**: **ESCALATE**
-- **Reasoning**: "Falls into gray area, requires human review"
+- **Reasoning**: "Valid request, no rule matched (gray area - requires human review)"
+- **Precedence**: Medium (ESCALATE)
 
 ### Rule Evaluation Order
 ```
-Customer/Order missing? → REJECT
-├─ No: Amount > $500 OR age > 90 days? → ESCALATE
-│  ├─ No: Amount < $50 AND age ≤ 30 days? → APPROVE
-│  └─ No: → ESCALATE (default)
+Step 1: MissingDataRule              → REJECT if identifier provided but not found
+Step 2: IncompleteRequestRule        → ESCALATE if no identifier or missing amount
+Step 3: OrderStatusRule ⭐ NEW        → REJECT if order status is non-refundable
+Step 4: RefundAmountVsOrderRule ⭐ NEW → ESCALATE if refund > order or negative
+Step 5: CustomerStatusRule ⭐ NEW     → ESCALATE if customer banned/inactive
+Step 6: HighValueOrOldOrderRule      → ESCALATE if refund ≥ $500 or age > 90 days
+Step 7: StandardRefundRule           → APPROVE if refund < $50 AND age ≤ 30 days
+Step 8: DefaultEscalationRule        → ESCALATE (catch-all)
+
+Winner: max(trace, key=lambda r: r.action)  where REJECT (3) > ESCALATE (2) > APPROVE (1)
 ```
 
 ---
@@ -227,7 +282,15 @@ LLM_TEMPERATURE = 0.0  # Deterministic (not creative)
 
 # Safety limits
 MAX_TOKEN_COUNT = 75  # Prevents token flooding attacks (gpt-4o-mini encoding)
+
+# Refund decision thresholds (change these to adjust auto-approval rules)
+APPROVE_MAX_AMOUNT = 50       # refund under $50 can auto-approve
+ESCALATE_MIN_AMOUNT = 500     # refund at or over $500 escalates
+APPROVE_MAX_AGE_DAYS = 30     # order 30 days old or newer can approve
+ESCALATE_MIN_AGE_DAYS = 90    # order older than this escalates
 ```
+
+**Key Benefit**: Thresholds are now configurable constants. Change `APPROVE_MAX_AMOUNT = 75` and tests verify the new boundary instantly—no code changes needed in rules.
 
 ### Environment Variables (`.env`)
 
@@ -398,7 +461,7 @@ The interactive UI in `src/app.py` demonstrates the system to technical intervie
 
 - **Test 2 - Policy Gray Area**
   - Text: "I want a refund for the $200 headphones I bought 45 days ago."
-  - Expected: **ESCALATE** (DefaultEscalationRule: gray area, missing order ID)
+  - Expected: **ESCALATE** (IncompleteRequestRule: no identifier provided to locate an order)
 
 - **Test 3 - Unrecognized Customer**
   - Text: "I need a refund for order 999999. My email is unknown@email.com."
@@ -406,7 +469,7 @@ The interactive UI in `src/app.py` demonstrates the system to technical intervie
 
 - **Test 4 - Ambiguous Request**
   - Text: "I ordered a laptop last week but haven't received it yet."
-  - Expected: **ESCALATE** (DefaultEscalationRule: no identifiers, inquiry not refund)
+  - Expected: **ESCALATE** (IncompleteRequestRule: no identifiers, inquiry not refund)
 
 ---
 
@@ -577,53 +640,94 @@ pytest --cov=src/rules
 
 **File**: `tests/test_rules.py`
 
-**Coverage**: All 4 business rules with 30+ test cases
+**Coverage**: 50+ test cases covering all 8 business rules with boundary, precedence, and configuration validation
 
-- **TestMissingDataRule**: 3 tests
-  - ✅ Customer missing → REJECT
-  - ✅ Order missing (with ID) → REJECT
-  - ✅ Both present → No match
+- **TestMissingDataRule** (5 tests)
+  - Customer ID provided but not found → REJECT
+  - Order ID provided but not found → REJECT
+  - Customer found but no order exists → REJECT
+  - Customer and order both found → No match
+  - No identifier at all → No match
 
-- **TestHighValueOrOldOrderRule**: 7 tests
-  - ✅ Amount > $500 → ESCALATE
-  - ✅ Age > 90 days → ESCALATE
-  - ✅ Both conditions → ESCALATE with both reasons
-  - ✅ Boundary conditions ($500, 90 days)
+- **TestIncompleteRequestRule** (3 tests)
+  - No order present → ESCALATE
+  - Order found but amount missing → ESCALATE
+  - $0 amount is specified (not missing) → No match
 
-- **TestStandardRefundRule**: 8 tests
-  - ✅ Amount < $50 AND age ≤ 30 days → APPROVE
-  - ✅ Amount ≥ $50 → No match
-  - ✅ Age > 30 days → No match
-  - ✅ Boundary conditions ($50, 30 days)
+- **TestOrderStatusRule** ⭐ NEW (5 tests)
+  - Order status "refunded" → REJECT
+  - Order status "cancelled" → REJECT
+  - Order status "not_shipped" → REJECT
+  - Order status "delivered" → No match
+  - Case-insensitive status check
 
-- **TestDefaultEscalationRule**: 2 tests
-  - ✅ Always escalates (catch-all)
+- **TestRefundAmountVsOrderRule** ⭐ NEW (4 tests)
+  - Refund amount exceeds order total → ESCALATE
+  - Refund equals order total → No match
+  - Negative refund amount → ESCALATE
 
-- **TestRuleEvaluationOrder**: 2 integration tests
-  - ✅ Missing data takes precedence
-  - ✅ High value takes precedence
+- **TestCustomerStatusRule** ⭐ NEW (4 tests)
+  - Customer status "banned" → ESCALATE
+  - Customer status "inactive" → ESCALATE
+  - Customer status "active" → No match
+  - Case-insensitive status check
+
+- **TestHighValueOrOldOrderRule** (5 tests)
+  - Refund amount ≥ threshold → ESCALATE
+  - Order age > threshold → ESCALATE
+  - Boundary conditions (just under/at/over thresholds)
+  - Low amount + recent order → No match
+
+- **TestStandardRefundRule** (7 tests)
+  - Refund < threshold AND age ≤ threshold → APPROVE
+  - Amount ≥ threshold or age > threshold → No match
+  - $0 amount (valid) → APPROVE
+  - Boundary conditions (just under/at thresholds)
+
+- **TestDecisionEngineIntegration** (8 tests)
+  - REJECT beats ESCALATE (precedence)
+  - ESCALATE beats APPROVE (precedence)
+  - Complete valid request → APPROVE
+  - Trace includes all evaluated rules
+  - Malformed date → ESCALATE (error handling)
+  - Refund exceeds order → ESCALATE
+  - Banned customer → ESCALATE
+
+- **TestThresholdConfiguration** (4 tests)
+  - Verify `APPROVE_MAX_AMOUNT` is respected
+  - Verify `ESCALATE_MIN_AMOUNT` is respected
+  - Verify `APPROVE_MAX_AGE_DAYS` is respected
+  - Verify `ESCALATE_MIN_AGE_DAYS` is respected
 
 ### Example Test Case
 
 ```python
-def test_standard_refund_approves(self, customer, recent_order):
-    """Low amount (<$50) and recent order (<=30 days) should APPROVE"""
-    rule = StandardRefundRule()
+def test_reject_beats_escalate(self, customer):
+    """REJECT precedence: order status outranks refund amount"""
+    order = Order(
+        order_id="ORD-REF",
+        customer_id="C1001",
+        amount=100.00,
+        date="2026-06-10",
+        status="refunded",  # REJECT
+    )
     context = {
         "customer": customer,
-        "order": recent_order,
-        "extracted_amount": 45.00,
+        "order": order,
+        "extracted_amount": ESCALATE_MIN_AMOUNT,  # Also ESCALATE
     }
-    action, reasoning = rule.evaluate(context)
-    assert action == "APPROVE"
-    assert "Standard refund conditions met" in reasoning
+    decision = decide(context)
+    assert decision.action == Action.REJECT  # Higher precedence wins
+    assert any(r.action == Action.REJECT for r in decision.trace)
 ```
 
 **Key Points**:
-1. Pass mock data directly to `rule.evaluate(context)`
-2. No LLM API calls—just pure Python logic
-3. Fast (milliseconds), deterministic, repeatable
-4. Full control over test data (boundary cases, edge cases)
+1. Call `decide(context)` to evaluate all 8 rules
+2. Returns `Decision` with action, primary_reason, and full trace
+3. No LLM API calls—just pure Python logic
+4. Fast (milliseconds), deterministic, repeatable
+5. Trace shows every rule that ran, not just the winner
+6. Thresholds come from config.py, testable via boundary cases
 
 ### Demonstrating Architectural Value
 
@@ -652,6 +756,31 @@ pytest tests/test_rules.py::TestCustomNewRule::test_new_rule_approves_valid_requ
 
 # 3. Deploy with confidence
 ```
+
+### Evaluate-All vs First-Match: Why We Changed
+
+**Old Design (First-Match)**:
+- Rule 1 matches → return immediately, Rules 2-8 never run
+- Problem: Rule ordering is load-bearing (reorder = different decision)
+- Problem: Missing rules' reasoning (why didn't it escalate?)
+
+**New Design (Evaluate-All + Explicit Precedence)**:
+- All 8 rules run every time
+- Pick winner by precedence: REJECT (3) > ESCALATE (2) > APPROVE (1)
+- Short-circuit only on REJECT (most decisive, nothing outranks it)
+- Full trace: see every rule evaluated, not just the match
+
+| Aspect | First-Match | Evaluate-All |
+|--------|-------------|--------------|
+| Rule ordering | Load-bearing (careful!) | Safe (order is conceptual) |
+| Audit trail | Winner only | All rules evaluated |
+| Precedence | Implicit (position) | Explicit (Action enum) |
+| Config thresholds | Hardcoded | Central constants |
+| Test safety | Reordering breaks tests | Reordering never breaks tests |
+
+**Example**: Both `OrderStatusRule` (REJECT) and `HighValueOrOldOrderRule` (ESCALATE) fire?
+- Old: Whichever came first would win
+- New: REJECT wins (precedence 3 > 2), trace shows both fired
 
 ### Integration vs Unit Testing
 
@@ -780,21 +909,22 @@ This MVP demonstrates the **architecture and security-first approach** needed fo
 
 | Initiative | Business Value | Technical Impact |
 |-----------|---|---|
-| **1. API-First Microservice & Real DB** | Enables horizontal scaling to handle 1000s of concurrent requests; seamless integration with enterprise data warehouses | Wrap Agent engine in FastAPI with async/await; replace JsonLocalDatabase with PostgreSQL via existing Repository pattern; deploy as containerized service with auto-scaling policies |
-| **2. Enhanced Security & Abuse Prevention** | Prevents cost-exhaustion attacks (Denial of Wallet); protects LLM budget from malicious actors; meets enterprise compliance requirements | JWT/API Key authentication for request origin verification; Redis-based rate limiting (10 req/min per customer); track token spend per user; auto-block abusive clients |
-| **3. Admin Control Center (Human-in-the-Loop)** | Empowers customer support managers to make real-time decisions without engineering involvement; full audit trail for compliance audits; reduce MTTR on edge cases | Dashboard to view audit logs, Langfuse metrics, and decision reasoning; one-click override UI for ESCALATE cases; decision history with full traceability; alert on anomalies |
-| **4. Dynamic No-Code Rule Engine** | Business analysts can deploy new rules in minutes (not weeks waiting for dev cycles); A/B test rule variations without code changes; rapid iteration on business logic | Move rules from `src/rules/rules.py` to database schema; UI for rule CRUD with condition builder; version control for rule changes; test rules against historical data before activation |
-| **5. Automated Customer Communication** | Reduces manual support team workload by 30%+; personalizes responses based on customer context and decision reasoning; improves customer satisfaction scores | Secondary LLM call that drafts email from `reasoning_trace`; template system for tone/compliance (legal-reviewed); attachments for refund confirmations; integrates with email service (SendGrid/AWS SES) |
-| **6. Active Learning Feedback Loop** | Identifies blind spots in rules by tracking human overrides; automatically flags edge cases for data team review; continuously improves accuracy over time | Track which ESCALATE cases humans overrode and why; ML pipeline flags patterns (e.g., "all $75 refunds with missing order IDs should REJECT, not ESCALATE"); suggest rule updates to analysts; measure accuracy drift |
+| **1. Confidence Scoring on LLM Extraction** | Flags low-confidence extractions for human review; improves decision quality by cascading uncertainty from extraction → escalation | Add `confidence: float (0-1)` field to prompt; LLM evaluates own certainty; escalate if confidence < 0.7; enables ML models to rank decisions by risk |
+| **2. API-First Microservice & Real DB** | Enables horizontal scaling to handle 1000s of concurrent requests; seamless integration with enterprise data warehouses | Wrap Agent engine in FastAPI with async/await; replace JsonLocalDatabase with PostgreSQL via existing Repository pattern; deploy as containerized service with auto-scaling policies |
+| **3. Enhanced Security & Abuse Prevention** | Prevents cost-exhaustion attacks (Denial of Wallet); protects LLM budget from malicious actors; meets enterprise compliance requirements | JWT/API Key authentication for request origin verification; Redis-based rate limiting (10 req/min per customer); track token spend per user; auto-block abusive clients |
+| **4. Admin Control Center (Human-in-the-Loop)** | Empowers customer support managers to make real-time decisions without engineering involvement; full audit trail for compliance audits; reduce MTTR on edge cases | Dashboard to view audit logs, Langfuse metrics, and decision reasoning; one-click override UI for ESCALATE cases; decision history with full traceability; alert on anomalies |
+| **5. Dynamic No-Code Rule Engine** | Business analysts can deploy new rules in minutes (not weeks waiting for dev cycles); A/B test rule variations without code changes; rapid iteration on business logic | Move rules from `src/rules/rules.py` to database schema; UI for rule CRUD with condition builder; version control for rule changes; test rules against historical data before activation |
+| **6. Automated Customer Communication** | Reduces manual support team workload by 30%+; personalizes responses based on customer context and decision reasoning; improves customer satisfaction scores | Secondary LLM call that drafts email from `reasoning_trace`; template system for tone/compliance (legal-reviewed); attachments for refund confirmations; integrates with email service (SendGrid/AWS SES) |
+| **7. Active Learning Feedback Loop** | Identifies blind spots in rules by tracking human overrides; automatically flags edge cases for data team review; continuously improves accuracy over time | Track which ESCALATE cases humans overrode and why; ML pipeline flags patterns (e.g., "all $75 refunds with missing order IDs should REJECT, not ESCALATE"); suggest rule updates to analysts; measure accuracy drift |
 
 ### Implementation Roadmap
 
-**Phase 1 (Weeks 1-2)**: FastAPI wrapper + PostgreSQL integration  
-**Phase 2 (Weeks 3-4)**: JWT/API Key auth + rate limiting middleware  
-**Phase 3 (Weeks 5-6)**: Admin dashboard MVP (view logs, override decisions)  
-**Phase 4 (Weeks 7-8)**: Dynamic rule engine backend  
-**Phase 5 (Weeks 9-10)**: No-code rule builder UI  
-**Phase 6 (Weeks 11-12)**: Email drafting + feedback loop  
+**Phase 1 (Weeks 1-2)**: Confidence scoring on LLM extraction  
+**Phase 2 (Weeks 3-4)**: FastAPI wrapper + PostgreSQL integration  
+**Phase 3 (Weeks 5-6)**: JWT/API Key auth + rate limiting middleware  
+**Phase 4 (Weeks 7-8)**: Admin dashboard MVP (view logs, override decisions)  
+**Phase 5 (Weeks 9-10)**: Dynamic rule engine backend + No-code rule builder UI  
+**Phase 6 (Weeks 11-12)**: Email drafting + active learning feedback loop  
 
 ### Why This Matters
 
