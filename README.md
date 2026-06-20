@@ -71,6 +71,21 @@ raw_text input
 AgentDecision JSON (APPROVE/REJECT/ESCALATE + reasoning)
 ```
 
+### The Pattern in Summary: Graceful Degradation
+
+Every failure path converges on **ESCALATE**, never on an exception or crash:
+
+```
+Token overflow     → ESCALATE
+LLM exception      → ESCALATE  (try/except wrapping all API calls)
+Bad LLM output     → ESCALATE  (Pydantic ValidationError → caught)
+Customer not found → REJECT    (MissingDataRule deterministic logic)
+Unknown/gray area  → ESCALATE  (DefaultEscalationRule fallback)
+Truly unhandled    → ESCALATE  (engine hardcoded fallback)
+```
+
+**Key Insight**: ESCALATE acts as the system's universal "I'm not confident" answer—it degrades gracefully to human review instead of crashing or making a wrong automated decision. This design ensures **production reliability**: no unhandled exceptions reach the customer, no silent failures occur in the logs.
+
 ---
 
 ## 📁 Project Structure
