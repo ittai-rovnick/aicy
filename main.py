@@ -8,6 +8,7 @@ from src.database.json_db import JsonLocalDatabase
 from src.llm.client import OpenAILLMClient
 from src.agent import CustomerRequestAgent
 from src.logging.logger import setup_logger
+from src.tracing import get_tracer
 
 load_dotenv()
 
@@ -47,6 +48,12 @@ def main():
         print(f"Reasoning: {decision.reasoning_trace}")
         print(f"Match: {'✅' if decision.action == expected else '❌'}")
         print("-" * 80)
+
+    # Flush any pending traces to Langfuse
+    tracer = get_tracer()
+    if tracer.enabled:
+        print("\n✅ Flushing traces to Langfuse...")
+        tracer.flush()
 
 
 if __name__ == "__main__":
