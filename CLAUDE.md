@@ -115,7 +115,7 @@ class RuleEngine:
 
 ### 5. Structured Logging to File
 
-**Files**: `src/logging/logger.py`
+**Files**: `src/observability/logger.py`
 
 **Decision**: Every decision logged to JSON file with timestamp, request_id, action, reasoning.
 
@@ -131,7 +131,7 @@ class RuleEngine:
 
 ### 6. Pydantic for Data Validation
 
-**Files**: `src/models.py`
+**Files**: `src/core/models.py`
 
 **Decision**: Pydantic schemas for all data structures (ExtractedRequestInfo, Customer, Order, AgentDecision).
 
@@ -147,7 +147,7 @@ class RuleEngine:
 
 ### 7. Langfuse for Production Observability
 
-**Files**: `src/tracing.py`, `src/llm/client.py`, `src/agent.py`
+**Files**: `src/observability/tracing.py`, `src/llm/client.py`, `src/core/agent.py`
 
 **Decision**: Singleton `LangfuseTracer` with context managers for tracing.
 
@@ -171,7 +171,7 @@ with tracer.trace("process_request", input_data={...}):
 
 ### 8. Word Count Limit as Security Gate
 
-**Files**: `src/agent.py` (line 32-39)
+**Files**: `src/core/agent.py` (line 38-45)
 
 **Decision**: Reject if request > 50 words.
 
@@ -191,12 +191,13 @@ with tracer.trace("process_request", input_data={...}):
 | File | Purpose | Key Design |
 |------|---------|-----------|
 | `main.py` | Entry point | Orchestrates agent, manages tracer lifecycle |
-| `src/agent.py` | Core orchestrator | Coordinates extraction, lookup, rules, logging |
+| `src/core/agent.py` | Core orchestrator | Coordinates extraction, lookup, rules, logging |
+| `src/core/models.py` | Data schemas | Pydantic validation for all data structures |
 | `src/llm/client.py` | LLM interface | Calls OpenAI, handles Langfuse tracing |
 | `src/database/` | Data access | Repository pattern, easy to swap |
 | `src/rules/` | Business logic | Hardcoded rules, deterministic decisions |
-| `src/logging/logger.py` | Audit trail | JSON logging for compliance |
-| `src/tracing.py` | Observability | Langfuse integration |
+| `src/observability/logger.py` | Audit trail | JSON logging for compliance |
+| `src/observability/tracing.py` | Observability | Langfuse integration |
 | `config/config.py` | Settings | Model names, limits, dates |
 
 ---

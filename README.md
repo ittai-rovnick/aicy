@@ -85,9 +85,11 @@ c:\Itay\Aicy\code\
 │
 ├── src/
 │   ├── __init__.py
-│   ├── models.py                    # Pydantic schemas
-│   ├── agent.py                     # Main orchestrator
-│   ├── tracing.py                   # Langfuse observability integration
+│   │
+│   ├── core/                        # Foundational modules
+│   │   ├── __init__.py
+│   │   ├── agent.py                 # Main orchestrator
+│   │   └── models.py                # Pydantic schemas
 │   │
 │   ├── database/
 │   │   ├── __init__.py
@@ -98,15 +100,16 @@ c:\Itay\Aicy\code\
 │   │   ├── __init__.py
 │   │   └── client.py                # OpenAI client + Langfuse integration
 │   │
-│   ├── rules/
+│   ├── observability/               # Logging + Tracing (renamed from logging/)
 │   │   ├── __init__.py
-│   │   ├── base.py                  # Abstract Rule class
-│   │   ├── rules.py                 # 4 rule implementations
-│   │   └── engine.py                # RuleEngine orchestrator
+│   │   ├── logger.py                # Structured logging
+│   │   └── tracing.py               # Langfuse observability integration
 │   │
-│   └── logging/
+│   └── rules/
 │       ├── __init__.py
-│       └── logger.py                # Structured logging
+│       ├── base.py                  # Abstract Rule class
+│       ├── rules.py                 # 4 rule implementations
+│       └── engine.py                # RuleEngine orchestrator
 │
 ├── logs/                            # Generated log files (auto-created)
 │
