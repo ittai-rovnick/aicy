@@ -60,16 +60,9 @@ class LangfuseTracer:
             yield None
             return
 
-        try:
-            # Generate a trace ID
-            trace_id = str(uuid.uuid4())
-            self._current_trace_id = trace_id
-
-            # Log the trace using observation (which is the public API method)
-            yield {"trace_id": trace_id, "name": name}
-        except Exception as e:
-            print(f"[WARN] Tracing error: {e}")
-            yield None
+        trace_id = str(uuid.uuid4())
+        self._current_trace_id = trace_id
+        yield {"trace_id": trace_id, "name": name}
 
     def log_generation(
         self,
