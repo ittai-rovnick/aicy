@@ -58,6 +58,8 @@ class CustomerRequestAgent:
             "order": self._lookup_order(extracted, customer),
             "extracted_amount": extracted.amount,
             "extracted_order_id": extracted.order_id,
+            "extracted_customer_id": extracted.customer_id,
+            "extracted_email": extracted.customer_email,
         }
 
     def _lookup_customer(self, extracted: ExtractedRequestInfo) -> Optional[Customer]:

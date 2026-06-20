@@ -8,21 +8,26 @@ from config.config import EVALUATION_DATE
 
 
 class MissingDataRule(Rule):
-    """Reject if customer or order not found"""
+    """Reject only when an explicit identifier was provided but not found.
+    Anonymous requests (no identifier at all) fall through to DefaultEscalationRule."""
 
     def evaluate(self, context: dict) -> tuple[Optional[str], Optional[str]]:
         customer = context.get("customer")
         order = context.get("order")
         extracted_order_id = context.get("extracted_order_id")
+        extracted_customer_id = context.get("extracted_customer_id")
+        extracted_email = context.get("extracted_email")
 
+        # An explicit order ID was given but does not exist in the DB
         if extracted_order_id and not order:
             return (
                 "REJECT",
                 f"No matching order found for order ID: {extracted_order_id}",
             )
 
-        if not customer:
-            return "REJECT", "No matching customer found in system"
+        # A customer identifier (ID or email) was given but does not exist in the DB
+        if (extracted_customer_id or extracted_email) and not customer:
+            return "REJECT", "No matching customer or order found in system"
 
         return None, None
 
