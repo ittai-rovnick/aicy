@@ -225,6 +225,41 @@ LANGFUSE_HOST=https://cloud.langfuse.com  # or your self-hosted instance
 
 ## 🚀 Setup & Running
 
+### 🐳 Running with Docker (Recommended)
+
+> **Single command to run everything — no Python setup required.**
+
+**Prerequisites**: [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed.
+
+**Step 1** — Launch with one command (works on first install):
+```bash
+docker-compose up --build
+```
+
+**That's it!** The container automatically:
+- Downloads and installs all dependencies
+- Creates `.env` from `.env.example` (with placeholder values)
+- Starts two services simultaneously:
+  - **Agent** — processes sample requests and prints decisions to console, then exits
+  - **UI** — Streamlit glass-box demo running at **http://localhost:8501**
+- Writes audit logs to the host `logs/` directory
+
+**Step 2** (if you have API keys) — Pass them as a one-liner:
+
+**PowerShell (Windows):**
+```powershell
+$env:OPENAI_API_KEY="sk-proj-..."; $env:LANGFUSE_PUBLIC_KEY="pk-lf-..."; $env:LANGFUSE_SECRET_KEY="sk-lf-..."; $env:LANGFUSE_BASE_URL="https://cloud.langfuse.com"; docker-compose up --build
+```
+
+**Bash (Linux/Mac):**
+```bash
+OPENAI_API_KEY=sk-proj-... LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... LANGFUSE_BASE_URL=https://cloud.langfuse.com docker-compose up --build
+```
+
+The Streamlit UI will reload automatically and the agent will be able to process requests with full observability.
+
+---
+
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
