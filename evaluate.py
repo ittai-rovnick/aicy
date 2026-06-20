@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from src.database.json_db import JsonLocalDatabase
 from src.llm.client import OpenAILLMClient
 from src.agent import CustomerRequestAgent
-from src.logging.logger import setup_logger
+from src.observability.logger import setup_logger
 
 load_dotenv()
 
@@ -48,10 +48,10 @@ def evaluate():
         is_correct = actual_action == expected_action
         if is_correct:
             passed += 1
-            status = "✅ PASS"
+            status = "PASS"
         else:
             failed += 1
-            status = "❌ FAIL"
+            status = "FAIL"
 
         results.append(
             {

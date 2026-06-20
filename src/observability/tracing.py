@@ -102,7 +102,7 @@ class LangfuseTracer:
             try:
                 self.client.flush()
             except Exception as e:
-                print(f"⚠️ Flush error: {e}")
+                print(f"[WARN] Flush error: {e}")
 
 
 # Global tracer instance

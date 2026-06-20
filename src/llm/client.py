@@ -6,7 +6,7 @@ import json
 from openai import OpenAI
 from src.models import ExtractedRequestInfo
 from config.config import OPENAI_MODEL, LLM_TEMPERATURE
-from src.tracing import get_tracer
+from src.observability.tracing import get_tracer
 
 
 class LLMClientInterface(ABC):
