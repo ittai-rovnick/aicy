@@ -1,9 +1,11 @@
 """Main agent orchestrator"""
+from typing import Optional
+
 from src.database.interface import DatabaseInterface
 from src.llm.client import LLMClientInterface
 from src.rules.engine import RuleEngine
 from src.observability.logger import log_agent_decision
-from src.core.models import AgentDecision
+from src.core.models import AgentDecision, Customer, ExtractedRequestInfo, Order
 from config.config import MAX_WORD_COUNT, CUSTOMER_LOOKUP_ORDER
 from src.observability.tracing import get_tracer
 
@@ -18,71 +20,64 @@ class CustomerRequestAgent:
         self.tracer = get_tracer()
 
     def process_request(self, request_id: str, raw_text: str) -> AgentDecision:
-        """
-        Process a customer request and return a decision.
-
-        Flow:
-        1. Word count check (security gate)
-        2. LLM extraction
-        3. Database lookup
-        4. Rule evaluation
-        5. Logging
-        6. Return decision
-        """
         with self.tracer.trace(
             "process_customer_request",
             input_data={"request_id": request_id, "text_length": len(raw_text)},
             metadata={"request_id": request_id},
-        ) as span:
-            # SECURITY GATE 1: Word count check (prevents token flooding)
-            word_count = len(raw_text.split())
-            if word_count > MAX_WORD_COUNT:
-                decision = AgentDecision(
-                    action="ESCALATE",
-                    reasoning_trace=f"Safety violation: {word_count} words exceeds {MAX_WORD_COUNT} word limit",
-                )
-                log_agent_decision(request_id, decision.action, decision.reasoning_trace)
+        ):
+            if decision := self._check_word_limit(request_id, raw_text):
                 return decision
 
-            # STEP 1: Extract data using LLM
             try:
                 extracted = self.llm.extract_info(raw_text)
             except Exception as e:
-                decision = AgentDecision(
-                    action="ESCALATE",
-                    reasoning_trace=f"LLM extraction failed: {str(e)}",
-                )
-                log_agent_decision(request_id, decision.action, decision.reasoning_trace)
-                return decision
+                return self._escalate(request_id, f"LLM extraction failed: {e}")
 
-            # STEP 2: Fetch background data using repository pattern
-            customer = None
-            for lookup_param in CUSTOMER_LOOKUP_ORDER:
-                if lookup_param == "customer_id" and extracted.customer_id:
-                    customer = self.db.get_customer(customer_id=extracted.customer_id)
-                    if customer:
-                        break
-                elif lookup_param == "email" and extracted.customer_email:
-                    customer = self.db.get_customer(email=extracted.customer_email)
-                    if customer:
-                        break
-
-            order = None
-            if extracted.order_id:
-                order = self.db.get_order(extracted.order_id)
-
-            # STEP 3: Run business rules (deterministic Python logic)
-            context = {
-                "customer": customer,
-                "order": order,
-                "extracted_amount": extracted.amount,
-                "extracted_order_id": extracted.order_id,
-            }
+            context = self._build_context(extracted)
             action, reasoning = self.rule_engine.run(context)
-
-            # STEP 4: Log the decision
             log_agent_decision(request_id, action, reasoning)
+            return AgentDecision(action=action, reasoning_trace=reasoning)
 
-            # STEP 5: Return structured output
-            decision = AgentDecision(action=action, reasoning_trace=reasoning)
-            return decision
+    def _check_word_limit(self, request_id: str, raw_text: str) -> Optional[AgentDecision]:
+        word_count = len(raw_text.split())
+        if word_count > MAX_WORD_COUNT:
+            return self._escalate(
+                request_id,
+                f"Safety violation: {word_count} words exceeds {MAX_WORD_COUNT} word limit",
+            )
+        return None
+
+    def _build_context(self, extracted: ExtractedRequestInfo) -> dict:
+        customer = self._lookup_customer(extracted)
+        return {
+            "customer": customer,
+            "order": self._lookup_order(extracted, customer),
+            "extracted_amount": extracted.amount,
+            "extracted_order_id": extracted.order_id,
+        }
+
+    def _lookup_customer(self, extracted: ExtractedRequestInfo) -> Optional[Customer]:
+        for lookup_param in CUSTOMER_LOOKUP_ORDER:
+            if lookup_param == "customer_id" and extracted.customer_id:
+                customer = self.db.get_customer(customer_id=extracted.customer_id)
+                if customer:
+                    return customer
+            elif lookup_param == "email" and extracted.customer_email:
+                customer = self.db.get_customer(email=extracted.customer_email)
+                if customer:
+                    return customer
+        return None
+
+    def _lookup_order(self, extracted: ExtractedRequestInfo, customer: Optional[Customer]) -> Optional[Order]:
+        if extracted.order_id:
+            return self.db.get_order(extracted.order_id)
+        if customer:
+            orders = self.db.get_customer_orders(customer.id)
+            if orders:
+                return orders[-1]
+        return None
+
+    def _escalate(self, request_id: str, reason: str) -> AgentDecision:
+        decision = AgentDecision(action="ESCALATE", reasoning_trace=reason)
+        log_agent_decision(request_id, decision.action, decision.reasoning_trace)
+        return decision
