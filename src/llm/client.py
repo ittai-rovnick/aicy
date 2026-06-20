@@ -71,3 +71,45 @@ Be precise. Only extract information explicitly mentioned in the message."""
             )
 
             return result
+
+
+class MockLLMClient(LLMClientInterface):
+    """Regex-based mock LLM client — no API key required, used for local demos."""
+
+    def extract_info(self, raw_text: str) -> ExtractedRequestInfo:
+        import re
+
+        # Order ID: ORD-123
+        order_match = re.search(r'\bORD-\d+\b', raw_text, re.IGNORECASE)
+        order_id = order_match.group(0).upper() if order_match else None
+
+        # Customer ID: C1001
+        customer_match = re.search(r'\bC\d{4}\b', raw_text)
+        customer_id = customer_match.group(0) if customer_match else None
+
+        # Email address
+        email_match = re.search(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', raw_text)
+        customer_email = email_match.group(0) if email_match else None
+
+        # Monetary amount: $30 or $600.00
+        amount_match = re.search(r'\$(\d+(?:\.\d{1,2})?)', raw_text)
+        amount = float(amount_match.group(1)) if amount_match else None
+
+        # Request type by keyword
+        lower = raw_text.lower()
+        if any(kw in lower for kw in ('refund', 'return', 'money back')):
+            request_type = 'refund'
+        elif any(kw in lower for kw in ('account', 'login', 'password', 'access')):
+            request_type = 'account_inquiry'
+        elif any(kw in lower for kw in ('complaint', 'broken', 'broke', 'damaged', 'terrible')):
+            request_type = 'complaint'
+        else:
+            request_type = 'unknown'
+
+        return ExtractedRequestInfo(
+            customer_id=customer_id,
+            customer_email=customer_email,
+            order_id=order_id,
+            request_type=request_type,
+            amount=amount,
+        )
