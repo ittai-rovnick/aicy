@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from src.database.json_db import JsonLocalDatabase
 from src.llm.client import OpenAILLMClient
-from src.agent import CustomerRequestAgent
+from src.core.agent import CustomerRequestAgent
 from src.observability.logger import setup_logger
 from src.observability.tracing import get_tracer
 

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from src.models import Customer, Order
+from src.core.models import Customer, Order
 
 
 class DatabaseInterface(ABC):

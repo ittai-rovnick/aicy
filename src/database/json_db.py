@@ -3,7 +3,7 @@ import json
 import os
 from typing import Optional
 
-from src.models import Customer, Order
+from src.core.models import Customer, Order
 from src.database.interface import DatabaseInterface
 from config.config import DATA_DIR
 

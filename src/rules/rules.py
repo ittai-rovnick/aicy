@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from src.models import Customer, Order
+from src.core.models import Customer, Order
 from src.rules.base import Rule
 from config.config import EVALUATION_DATE
 

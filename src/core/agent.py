@@ -3,7 +3,7 @@ from src.database.interface import DatabaseInterface
 from src.llm.client import LLMClientInterface
 from src.rules.engine import RuleEngine
 from src.observability.logger import log_agent_decision
-from src.models import AgentDecision
+from src.core.models import AgentDecision
 from config.config import MAX_WORD_COUNT, CUSTOMER_LOOKUP_ORDER
 from src.observability.tracing import get_tracer
 
