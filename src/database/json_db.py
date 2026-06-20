@@ -42,8 +42,6 @@ class JsonLocalDatabase(DatabaseInterface):
 
     def get_order(self, order_id: str) -> Optional[Order]:
         """Fetch order by order ID"""
-        from typing import Optional
-
         for order in self.orders:
             if order.get("order_id") == order_id:
                 return Order(**order)
