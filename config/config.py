@@ -13,7 +13,7 @@ OPENAI_MODEL = "gpt-4o-mini"
 LLM_TEMPERATURE = 0.0  # Deterministic extraction
 
 # Safety limits
-MAX_WORD_COUNT = 50
+MAX_TOKEN_COUNT = 75
 
 # Langfuse Configuration
 LANGFUSE_PUBLIC_KEY = ""  # Set via environment variable

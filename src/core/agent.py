@@ -1,13 +1,17 @@
 """Main agent orchestrator"""
 from typing import Optional
 
+import tiktoken
+
 from src.database.interface import DatabaseInterface
 from src.llm.client import LLMClientInterface
 from src.rules.engine import RuleEngine
 from src.observability.logger import log_agent_decision
 from src.core.models import AgentDecision, Customer, ExtractedRequestInfo, Order
-from config.config import MAX_WORD_COUNT, CUSTOMER_LOOKUP_ORDER
+from config.config import MAX_TOKEN_COUNT, CUSTOMER_LOOKUP_ORDER, OPENAI_MODEL
 from src.observability.tracing import get_tracer
+
+_tokenizer = tiktoken.encoding_for_model(OPENAI_MODEL)
 
 
 class CustomerRequestAgent:
@@ -39,11 +43,11 @@ class CustomerRequestAgent:
             return AgentDecision(action=action, reasoning_trace=reasoning)
 
     def _check_word_limit(self, request_id: str, raw_text: str) -> Optional[AgentDecision]:
-        word_count = len(raw_text.split())
-        if word_count > MAX_WORD_COUNT:
+        token_count = len(_tokenizer.encode(raw_text))
+        if token_count > MAX_TOKEN_COUNT:
             return self._escalate(
                 request_id,
-                f"Safety violation: {word_count} words exceeds {MAX_WORD_COUNT} word limit",
+                f"Safety violation: {token_count} tokens exceeds {MAX_TOKEN_COUNT} token limit",
             )
         return None
 
